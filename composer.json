@@ -1,0 +1,28 @@
+{
+  "name": "easyf/filtval",
+  "type": "library",
+  "description": "Filter and Validation data",
+  "homepage": "https://github.com/alfonsmartinez/Filtval",
+  "keywords": [
+    "filter",
+    "validation"
+  ],
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Alfons Martinez",
+      "email": "alfonsmartinezparra@gmail.com"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Filtval\\": "src/Filtval"
+    }
+  },
+  "require": {
+    "php": ">=5.5.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "*"
+  }
+}
