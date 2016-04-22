@@ -3,6 +3,8 @@
 class FilterTest extends PHPUnit_Framework_TestCase
 {
 
+    protected static $filter;
+
     /**
      * Sets up the fixture, for example, opens a network connection.
      * This method is called before a test is executed.
@@ -26,9 +28,9 @@ class FilterTest extends PHPUnit_Framework_TestCase
     public function getFilters()
     {
         return [
-            ['name' => ' example text ', 'example text'],
-            ['name' => 'example   text ', 'example   text'],
-            ['name' => ' example text', 'example text'],
+            [['name' => ' example text '], 'example text'],
+            [['name' => 'example   text '], 'example   text'],
+            [['name' => ' example text'], 'example text'],
         ];
     }
 
@@ -37,11 +39,12 @@ class FilterTest extends PHPUnit_Framework_TestCase
      */
     public function testTrim($data, $response)
     {
-        $filter = new \Filtval\Filter([
-           'name' => 'trim'
+        $filter = new Filtval\Filter([
+            'name' => 'trim'
         ]);
         $responsetext = $filter->filter($data);
-        $this->assertEquals($responsetext, $response);
+
+        $this->assertEquals($responsetext['name'], $response);
     }
 
 }

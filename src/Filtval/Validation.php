@@ -3,45 +3,70 @@
 namespace Filtval;
 
 
+use Symfony\Component\HttpFoundation\File\File;
+
 class Validation
 {
 
     private $error = false;
     private $errors = [];
     private $apply_rules = [];
-    private $data = [];
 
-    public function __construct($rules, $messages)
+    private $special = ['required'];
+
+    public function __construct($rules, array $messages = null)
     {
         $this->parseRules($rules);
-        $this->messages = $messages;
+        $this->messages = $messages ?: include __DIR__ . '/messages.php';
     }
 
     public function validate($data)
     {
-        $this->data = $data;
+        //$data = $data;
         foreach ($this->apply_rules as $name => $rules) {
             foreach ($rules as $filter_function => $params) {
-                if (!$value = call_user_func(array($this, $filter_function), $name, $params)) {
-                    $this->errors[$name][] = $this->setError($filter_function, $name, $params);
-                    $this->error = true;
+
+                if (!isset($data[$name])) {
+                    $this->setError($filter_function, $name, $params);
+                } elseif (is_array($data[$name]) && !in_array($filter_function, $this->special)) {
+                    foreach ($data[$name] as $key => $data_) {
+                        if (!$value = call_user_func(array($this, $filter_function), $data_, $data, $params)) {
+                            $this->setError($filter_function, $name, $params, $key);
+                        }
+                    }
+                } else {
+                    if (!$value = call_user_func(array($this, $filter_function), $data[$name], $data, $params)) {
+                        $this->setError($filter_function, $name, $params);
+                    }
                 }
+
             }
         }
 
         return ($this->error) ? false : true;
     }
 
-    private function setError($fname, $name, $value)
+    private function setError($fname, $name, $value, $key = null)
     {
         $message_key = str_replace('validate_', '', $fname);
 
         $error = $this->messages[$message_key];
+        if (is_array($error)) {
+            $type = array_shift($value);
+            $error = $error[$type];
+        }
         $error = str_replace(':attribute', $name, $error);
         if ($value) {
             $error = str_replace(':value', implode(',', $value), $error);
         }
-        return $error;
+
+        if (!is_null($key)) {
+            $this->errors[$name][$key][] = $error;
+        } else {
+            $this->errors[$name][] = $error;
+        }
+        $this->error = true;
+
     }
 
     public function getErrors()
@@ -52,7 +77,9 @@ class Validation
     protected function parseRules($rules)
     {
         foreach ($rules as $name => $rule) {
-            $this->apply_rules[$name] = $this->getNameRules($rule);
+            if (!empty($rule)) {
+                $this->apply_rules[$name] = $this->getNameRules($rule);
+            }
         }
     }
 
@@ -74,33 +101,27 @@ class Validation
         return $p_rules;
     }
 
-    protected function validate_required($field)
+    protected function validate_required($value)
     {
-        if (!isset($this->data[$field])) {
+        if (is_null($value)) {
             return false;
-        } else {
-            if (is_null($this->data[$field])) {
-                return false;
-            } elseif (is_string($this->data[$field]) && trim($this->data[$field]) === '') {
-                return false;
-            } elseif ($this->data[$field] instanceof \Symfony\Component\HttpFoundation\File\File) {
-                return (string)$this->data[$field]->getPath() != '';
-            }
+        } elseif (is_string($value) && trim($value) === '') {
+            return false;
+        } elseif ($value instanceof File) {
+            return (string)$value->getPath() != '';
         }
 
         return true;
     }
 
-    protected function validate_contains($field, $param)
+    protected function validate_contains($value, $data, $param)
     {
-        if (!isset($this->data[$field])) {
-            return false;
-        }
 
         $params = array_map(function ($element) {
             return trim(strtolower($element));
         }, $param);
-        $val = trim(strtolower($this->data[$field]));
+
+        $val = trim(strtolower($value));
 
         if (!in_array($val, $params)) { // valid, return nothing
             return false;
@@ -109,79 +130,53 @@ class Validation
         return true;
     }
 
-    protected function validate_valid_email($field)
+    protected function validate_valid_email($value)
     {
-        if (!isset($this->data[$field])) {
-            return false;
-        }
-
-        $val = $this->data[$field];
-
-        if (!filter_var($val, FILTER_VALIDATE_EMAIL)) {
+        if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
             return false;
         }
 
         return true;
     }
 
-    protected function validate_max_len($field, $param)
+    protected function validate_max($value, $data, $param)
     {
-        if (!isset($this->data[$field])) {
-            return false;
-        }
-        $val = $this->data[$field];
-        $maxlen = (int)implode('', $param);
+        return $this->getSize($value) <= $param[1];
+    }
 
-        if (function_exists('mb_strlen')) {
-            if (mb_strlen($val) > $maxlen) {
-                return false;
-            }
+    protected function getSize($value)
+    {
+        if ($value instanceof File) {
+            return $value->getSize() / 1024;
+        } elseif (is_numeric($value)) {
+            return $value;
+        } elseif (is_array($value)) {
+            return count($value);
         } else {
-            if (strlen($val) > $maxlen) {
-                return false;
+            if (function_exists('mb_strlen')) {
+                return mb_strlen($value);
+            } else {
+                return strlen($value);
             }
         }
-
-        return true;
     }
 
-    protected function validate_min_len($field, $param)
+    protected function validate_min($value, $data, $param)
     {
-        if (!isset($this->data[$field])) {
-            return false;
-        }
-        $val = $this->data[$field];
+        return $this->getSize($value) > $param[1];
+    }
+
+    protected function validate_exact_len($value, $data, $param)
+    {
         $maxlen = (int)implode('', $param);
 
         if (function_exists('mb_strlen')) {
-            if (mb_strlen($val) < $maxlen) {
-                return false;
-            }
-        } else {
-            if (strlen($val) < $maxlen) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    protected function validate_exact_len($field, $param)
-    {
-        if (!isset($this->data[$field])) {
-            return false;
-        }
-        $val = $this->data[$field];
-        $maxlen = (int)implode('', $param);
-
-        if (function_exists('mb_strlen')) {
-            var_dump(mb_strlen($val));
-            if (mb_strlen($val) == $maxlen) {
+            if (mb_strlen($value) == $maxlen) {
                 return false;
             }
         } else {
 
-            if (strlen($val) == $maxlen) {
+            if (strlen($value) == $maxlen) {
                 return false;
             }
         }
@@ -189,14 +184,14 @@ class Validation
         return true;
     }
 
-    protected function validate_alpha($field)
+    protected function validate_alpha($value)
     {
-        if (!isset($this->data[$field]) || empty($this->data[$field])) {
+        if (empty($value)) {
             return false;
         }
 
         if (!preg_match('/^([a-zÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïðòóôõöùúûüýÿ])+$/i',
-                $this->data[$field]) !== false
+                $value) !== false
         ) {
             return false;
         }
@@ -204,72 +199,66 @@ class Validation
         return true;
     }
 
-    protected function validate_alpha_space($field)
+    protected function validate_alpha_space($value)
     {
-        if (!isset($this->data[$field]) || empty($this->data[$field])) {
+        if (empty($value)) {
             return false;
         }
 
-        if (!preg_match("/^([a-z0-9ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïðòóôõöùúûüýÿ\s])+$/i",
-                $this->data[$field]) !== false
-        ) {
+        if (!preg_match("/^([a-z0-9ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïðòóôõöùúûüýÿ\s])+$/i", $value) !== false) {
             return false;
         }
 
         return true;
     }
 
-    protected function validate_alpha_dash($field)
+    protected function validate_alpha_dash($value)
     {
-        if (!isset($this->data[$field]) || empty($this->data[$field])) {
+        if (empty($value)) {
             return false;
         }
 
-        if (!preg_match('/^([a-z0-9ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïðòóôõöùúûüýÿ_-])+$/i',
-                $this->data[$field]) !== false
-        ) {
+        if (!preg_match('/^([a-z0-9ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïðòóôõöùúûüýÿ_-])+$/i', $value) !== false) {
             return false;
         }
 
         return true;
     }
 
-    protected function validate_alpha_numeric($field)
+    protected function validate_alpha_numeric($value)
     {
-        if (!isset($this->data[$field]) || empty($this->data[$field])) {
+        if (empty($value)) {
             return false;
         }
 
-        if (!preg_match('/^([a-z0-9ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïðòóôõöùúûüýÿ])+$/i',
-                $this->data[$field]) !== false
-        ) {
+        if (!preg_match('/^([a-z0-9ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïðòóôõöùúûüýÿ])+$/i', $value) !== false) {
             return false;
         }
 
         return true;
     }
 
-    protected function validate_numeric($field)
+    protected function validate_numeric($value)
     {
 
-        if (!isset($this->data[$field]) || empty($this->data[$field])) {
+        if (empty($value)) {
             return false;
         }
 
-        if (!is_numeric($this->data[$field])) {
+        if (!is_numeric($value)) {
             return false;
         }
 
         return true;
     }
 
-    protected function validate_integer($field)
+    protected function validate_integer($value)
     {
-        if (!isset($this->data[$field]) || empty($this->data[$field])) {
+        if (empty($value)) {
             return false;
         }
 
-        if (filter_var($this->data[$field], FILTER_VALIDATE_INT) === false) {
+        if (filter_var($value, FILTER_VALIDATE_INT) === false) {
             return false;
         }
 
